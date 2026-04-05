@@ -70,7 +70,7 @@
                 video.srcObject = stream;
                 await video.play();
                 video.onloadedmetadata = () => {
-                    scanInterval = setInterval(scanFrame, 150);
+                    scanInterval = setInterval(scanFrame, 100);
                 };
             } catch(err) {
                 document.getElementById('status').textContent = 
@@ -93,8 +93,8 @@
 
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                inversionAttempts: 'dontInvert'
-            });
+    inversionAttempts: 'attemptBothInversions'
+});
 
             if (code) {
                 const clean = code.data.trim().toUpperCase();
