@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QC Scanner</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0f172a; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif; padding: 20px; }
+        h1 { color: white; font-size: 14px; font-weight: 900; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 20px; opacity: 0.6; }
+        #scanner-container { position: relative; width: 100%; max-width: 360px; aspect-ratio: 1; border-radius: 24px; overflow: hidden; background: black; }
+        #video { width: 100%; height: 100%; object-fit: cover; }
+        #canvas { display: none; }
+        #overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+        #frame { width: 200px; height: 200px; border: 3px solid #fbbf24; border-radius: 16px; position: relative; }
+        #frame::before, #frame::after, .corner-bl, .corner-br { content: ''; position: absolute; width: 24px; height: 24px; border-color: white; border-style: solid; }
+        #frame::before { top: -2px; left: -2px; border-width: 4px 0 0 4px; border-radius: 4px 0 0 0; }
+        #frame::after { top: -2px; right: -2px; border-width: 4px 4px 0 0; border-radius: 0 4px 0 0; }
+        .corner-bl { bottom: -2px; left: -2px; border-width: 0 0 4px 4px; border-radius: 0 0 0 4px; }
+        .corner-br { bottom: -2px; right: -2px; border-width: 0 4px 4px 0; border-radius: 0 0 4px 0; }
+        #scanline { position: absolute; left: 0; right: 0; height: 2px; background: #fbbf24; opacity: 0.8; animation: scan 2s linear infinite; }
+        @keyframes scan { 0% { top: 0; } 50% { top: 100%; } 100% { top: 0; } }
+        #status { color: rgba(255,255,255,0.5); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; margin-top: 16px; text-align: center; }
+        #result { display: none; flex-direction: column; align-items: center; gap: 16px; }
+        #result-id { color: #fbbf24; font-size: 28px; font-weight: 900; letter-spacing: 0.05em; text-align: center; }
+        #result-label { color: rgba(255,255,255,0.4); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; }
+        #rescan-btn { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); padding: 12px 28px; border-radius: 12px; font-weight: 900; font-size: 12px; text-transform: uppercase; letter-spacing: 0.15em; cursor: pointer; }
+        .success { color: #4ade80 !important; }
+    </style>
+</head>
+<body>
+
+    <h1>Point Camera at QR Code</h1>
+
+    <div id="scanner-container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="canvas"></canvas>
+        <div id="overlay">
+            <div id="frame">
+                <div class="corner-bl"></div>
+                <div class="corner-br"></div>
+                <div id="scanline"></div>
+            </div>
+        </div>
+    </div>
+
+    <p id="status">Align QR code within the frame</p>
+
+    <div id="result">
+        <p id="result-label">Scanned Successfully</p>
+        <p id="result-id"></p>
+        <button id="rescan-btn" onclick="restartScanner()">Scan Again</button>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const returnUrl = params.get('return');
+
+        let stream = null;
+        let scanInterval = null;
+        let locked = false;
+
+        async function startScanner() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                const video = document.getElementById('video');
+                video.srcObject = stream;
+                await video.play();
+                video.onloadedmetadata = () => {
+                    scanInterval = setInterval(scanFrame, 150);
+                };
+            } catch(err) {
+                document.getElementById('status').textContent = 
+                    err.name === 'NotAllowedError' 
+                        ? 'Camera permission denied — please allow camera access in browser settings'
+                        : 'Camera unavailable on this device';
+            }
+        }
+
+        function scanFrame() {
+            if (locked) return;
+            const video = document.getElementById('video');
+            if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                inversionAttempts: 'dontInvert'
+            });
+
+            if (code) {
+                const clean = code.data.trim().toUpperCase();
+                if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
+                    document.getElementById('status').textContent = 'Invalid QR — not an Order ID';
+                    return;
+                }
+                onScanSuccess(clean);
+            }
+        }
+
+        function onScanSuccess(orderId) {
+            locked = true;
+            clearInterval(scanInterval);
+
+            // Stop camera
+            if (stream) stream.getTracks().forEach(t => t.stop());
+
+            // Show result
+            document.getElementById('scanner-container').style.display = 'none';
+            document.getElementById('status').textContent = '✓ Sending back to console...';
+            document.getElementById('status').classList.add('success');
+            document.getElementById('result').style.display = 'flex';
+            document.getElementById('result-id').textContent = orderId;
+
+            // Send back to Apps Script after short delay
+            setTimeout(() => {
+                if (returnUrl) {
+                    window.location.href = returnUrl + '&scannedId=' + encodeURIComponent(orderId);
+                }
+            }, 1000);
+        }
+
+        function restartScanner() {
+            locked = false;
+            document.getElementById('scanner-container').style.display = 'block';
+            document.getElementById('result').style.display = 'none';
+            document.getElementById('status').textContent = 'Align QR code within the frame';
+            document.getElementById('status').classList.remove('success');
+            startScanner();
+        }
+
+        startScanner();
+    </script>
+</body>
+</html>
