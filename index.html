@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>QC Scanner</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -20,7 +21,7 @@
             position: relative; width: 100%; max-width: 400px; 
             aspect-ratio: 1; border-radius: 20px; overflow: hidden; 
             background: #000; border: 2px solid #334155;
-            display: none; /* Hidden until camera starts */
+            display: none;
         }
         #preview { 
             width: 100%; height: 100%; object-fit: cover; display: block;
@@ -92,55 +93,37 @@
         <button onclick="window.location.reload()" style="background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); padding: 12px 28px; border-radius: 12px; font-weight: 900; font-size: 12px; text-transform: uppercase; cursor: pointer; margin-top: 8px;">Scan Again</button>
     </div>
 
-    <script type="module">
-        import { BrowserMultiFormatReader } from 'https://esm.sh/@zxing/browser@0.1.4';
-        import { DecodeHintType, BarcodeFormat } from 'https://esm.sh/@zxing/library@0.20.0';
-
+    <script>
         const params = new URLSearchParams(window.location.search);
         const returnUrl = params.get('return');
 
-        let codeReader;
         let locked = false;
+        let videoStream = null;
+
+        // Hidden canvas to extract video frames safely
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         window.startApp = async function() {
             document.getElementById('start-screen').style.display = 'none';
             document.getElementById('status').textContent = 'Initializing hardware...';
-            
-            const hints = new Map();
-            hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
-            hints.set(DecodeHintType.TRY_HARDER, true);
-            codeReader = new BrowserMultiFormatReader(hints);
 
             try {
-                // 1. Manually request the camera (The code that worked!)
+                // Locking ideal width to 1280 (720p) prevents the OS from attempting macro-lens handoffs
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment' } 
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
                 });
                 
-                // 2. Attach it to the video box
+                videoStream = stream;
                 const videoEl = document.getElementById('preview');
                 videoEl.srcObject = stream;
-                
-                // 3. Force it to play
                 await videoEl.play();
                 
-                // 4. Reveal the UI
                 document.getElementById('scanner-wrap').style.display = 'block';
                 document.getElementById('status').textContent = 'Align QR code within the frame';
 
-                // 5. Tell ZXing to decode from the stream we already successfully created
-                codeReader.decodeFromStream(stream, videoEl, (result, err) => {
-                    if (locked) return;
-                    
-                    if (result) {
-                        const clean = result.getText().trim().toUpperCase();
-                        if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
-                            document.getElementById('status').textContent = 'Invalid QR — not an Order ID';
-                            return;
-                        }
-                        onSuccess(clean);
-                    }
-                });
+                // Kick off the isolated scanning loop
+                requestAnimationFrame(scanLoop);
 
             } catch (err) {
                 document.getElementById('status').textContent = 'Camera permission denied.';
@@ -149,10 +132,47 @@
             }
         };
 
+        function scanLoop() {
+            if (locked) return;
+            
+            const videoEl = document.getElementById('preview');
+            
+            // Only scan if the video has loaded enough data to draw
+            if (videoEl.readyState === videoEl.HAVE_ENOUGH_DATA) {
+                canvas.width = videoEl.videoWidth;
+                canvas.height = videoEl.videoHeight;
+                ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+                
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                
+                // jsQR quietly checks the pixels without touching the camera API
+                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: "dontInvert",
+                });
+
+                if (code) {
+                    const clean = code.data.trim().toUpperCase();
+                    if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
+                        document.getElementById('status').textContent = 'Invalid QR — not an Order ID';
+                    } else {
+                        onSuccess(clean);
+                        return; // Stop the loop
+                    }
+                }
+            }
+            // Keep looping
+            requestAnimationFrame(scanLoop);
+        }
+
         function onSuccess(orderId) {
             locked = true;
-            if (codeReader) codeReader.reset();
             
+            // Turn off the camera hardware immediately to save battery
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+            }
+            
+            // Note: The screen will go dark blue here because we hide the camera to show the success message!
             document.getElementById('scanner-wrap').style.display = 'none';
             document.getElementById('status').style.display = 'none';
 
