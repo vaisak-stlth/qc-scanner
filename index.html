@@ -136,66 +136,60 @@
         let locked = false;
 
         async function startScanner() {
-            try {
-                const hints = new Map();
-                hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
-                hints.set(DecodeHintType.TRY_HARDER, true);
+    try {
+        const hints = new Map();
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+        hints.set(DecodeHintType.TRY_HARDER, true);
 
-                codeReader = new BrowserMultiFormatReader(hints);
+        codeReader = new BrowserMultiFormatReader(hints);
 
-                const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-                
-                // Prefer rear camera
-                let deviceId = devices[0]?.deviceId;
-                const rearCam = devices.find(d => 
-                    d.label.toLowerCase().includes('back') || 
-                    d.label.toLowerCase().includes('rear') ||
-                    d.label.toLowerCase().includes('environment')
-                );
-                if (rearCam) deviceId = rearCam.deviceId;
-
-                const constraints = {
-                    video: {
-                        deviceId: deviceId ? { exact: deviceId } : undefined,
-                        facingMode: { ideal: 'environment' },
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                        focusMode: { ideal: 'continuous' }
-                    }
-                };
-
-                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-                const video = document.getElementById('preview');
-                video.srcObject = currentStream;
-
-                // Enable torch button if supported
-                const [track] = currentStream.getVideoTracks();
-                torchTrack = track;
-                const caps = track.getCapabilities?.();
-                if (caps?.torch) {
-                    document.getElementById('torch-btn').style.display = 'inline-block';
-                }
-
-                await codeReader.decodeFromStream(currentStream, video, (result, err) => {
-                    if (locked) return;
-                    if (result) {
-                        const clean = result.getText().trim().toUpperCase();
-                        if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
-                            document.getElementById('status').textContent = 'Invalid QR — not an Order ID';
-                            return;
-                        }
-                        onSuccess(clean);
-                    }
-                });
-
-            } catch(err) {
-                console.error(err);
-                document.getElementById('status').textContent = 
-                    err.name === 'NotAllowedError'
-                        ? 'Camera permission denied — please allow in browser settings'
-                        : 'Camera error: ' + err.message;
+        // 1. Ask for the environment camera in the simplest, most bulletproof way
+        const constraints = {
+            video: {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1280 }, // Lowered to 720p for better macro focus & battery life
+                height: { ideal: 720 }
             }
+        };
+
+        // 2. Initialize stream
+        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const video = document.getElementById('preview');
+        video.srcObject = currentStream;
+
+        // 3. Torch setup (Wrapped in a try/catch because Apple hates the Torch API)
+        try {
+            const [track] = currentStream.getVideoTracks();
+            torchTrack = track;
+            const caps = track.getCapabilities ? track.getCapabilities() : {};
+            if (caps && caps.torch) {
+                document.getElementById('torch-btn').style.display = 'inline-block';
+            }
+        } catch (torchErr) {
+            console.warn("Torch API not supported on this device.");
         }
+
+        // 4. Start Decoding
+        await codeReader.decodeFromStream(currentStream, video, (result, err) => {
+            if (locked) return;
+            if (result) {
+                const clean = result.getText().trim().toUpperCase();
+                if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
+                    document.getElementById('status').textContent = 'Invalid QR — not an Order ID';
+                    return;
+                }
+                onSuccess(clean);
+            }
+        });
+
+    } catch(err) {
+        console.error("Camera Init Error:", err);
+        document.getElementById('status').textContent = 
+            err.name === 'NotAllowedError'
+                ? 'Camera access denied. Please allow in settings.'
+                : 'Camera error. Please refresh and try again.';
+    }
+}
 
         function onSuccess(orderId) {
             locked = true;
