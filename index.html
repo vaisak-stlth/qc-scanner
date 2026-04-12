@@ -3,81 +3,169 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Raw Camera Test</title>
+    <title>QC Scanner</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
-            background: #0f172a; color: white; display: flex; flex-direction: column; 
-            align-items: center; justify-content: center; min-height: 100vh; margin: 0; 
-            font-family: sans-serif; padding: 20px; box-sizing: border-box;
+            background: #0f172a; display: flex; flex-direction: column; 
+            align-items: center; justify-content: center; min-height: 100vh; 
+            font-family: sans-serif; padding: 20px; overflow: hidden;
         }
-        video { 
-            width: 100%; max-width: 400px; aspect-ratio: 1; 
-            background: #000; border: 4px solid #334155; border-radius: 16px;
-            object-fit: cover;
+        h1 { 
+            color: white; font-size: 12px; font-weight: 900; 
+            letter-spacing: 0.2em; text-transform: uppercase; 
+            margin-bottom: 16px; opacity: 0.5; 
         }
-        button { 
-            margin-top: 30px; padding: 20px 40px; font-size: 16px; font-weight: 900; 
-            background: #4f46e5; color: white; border: none; border-radius: 12px; 
-            text-transform: uppercase; letter-spacing: 0.1em; cursor: pointer;
+        #scanner-wrap { 
+            position: relative; width: 100%; max-width: 400px; 
+            aspect-ratio: 1; border-radius: 20px; overflow: hidden; 
+            background: #000; border: 2px solid #334155;
+            display: none; /* Hidden until camera starts */
         }
-        #console-log {
-            margin-top: 20px; font-family: monospace; color: #fbbf24; 
-            text-align: center; font-size: 12px; white-space: pre-wrap;
-            background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px; width: 100%; max-width: 400px;
+        #preview { 
+            width: 100%; height: 100%; object-fit: cover; display: block;
         }
+        #overlay { 
+            position: absolute; inset: 0; display: flex; 
+            align-items: center; justify-content: center; pointer-events: none; 
+        }
+        #frame { 
+            width: 65%; height: 65%; border: 2px solid rgba(251,191,36,0.8); 
+            border-radius: 12px; position: relative; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
+        }
+        .c { position: absolute; width: 20px; height: 20px; border-color: white; border-style: solid; }
+        .tl { top:-2px; left:-2px; border-width: 3px 0 0 3px; border-radius: 4px 0 0 0; }
+        .tr { top:-2px; right:-2px; border-width: 3px 3px 0 0; border-radius: 0 4px 0 0; }
+        .bl { bottom:-2px; left:-2px; border-width: 0 0 3px 3px; border-radius: 0 0 0 4px; }
+        .br { bottom:-2px; right:-2px; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
+        #scanline { 
+            position: absolute; left: 5%; right: 5%; height: 2px; 
+            background: linear-gradient(90deg, transparent, #fbbf24, transparent); 
+            animation: scan 1.5s ease-in-out infinite; top: 0;
+        }
+        @keyframes scan { 
+            0% { top: 5%; opacity: 1; } 50% { top: 90%; opacity: 1; } 100% { top: 5%; opacity: 1; } 
+        }
+        #status { 
+            color: rgba(255,255,255,0.5); font-size: 11px; font-weight: 700; 
+            text-transform: uppercase; letter-spacing: 0.12em; margin-top: 14px; 
+            text-align: center; min-height: 20px;
+        }
+        #success-screen {
+            display: none; flex-direction: column; align-items: center; 
+            gap: 16px; text-align: center;
+        }
+        #success-icon { font-size: 56px; }
+        #success-id { color: #fbbf24; font-size: 26px; font-weight: 900; letter-spacing: 0.05em; }
+        #success-label { color: rgba(255,255,255,0.4); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; }
+        #success-msg { color: #4ade80; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; }
     </style>
 </head>
 <body>
 
-    <h2 style="margin-bottom: 20px; text-transform: uppercase; font-weight: 900; font-size: 16px; letter-spacing: 0.1em; opacity: 0.7;">Hardware Test</h2>
-    
-    <video id="test-video" playsinline autoplay muted></video>
-    
-    <button id="start-btn">1. Open Camera</button>
-    
-    <div id="console-log">Awaiting command...</div>
+    <div id="start-screen" style="position: fixed; inset: 0; z-index: 999; background: #0f172a; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px;">
+        <button onclick="startApp()" style="background: #4f46e5; color: white; padding: 20px 40px; border-radius: 20px; font-size: 16px; font-weight: 900; border: none; box-shadow: 0 10px 30px rgba(79, 70, 229, 0.4); text-transform: uppercase; letter-spacing: 0.1em; cursor: pointer;">
+            📸 Start Scanner
+        </button>
+    </div>
 
-    <script>
-        const video = document.getElementById('test-video');
-        const btn = document.getElementById('start-btn');
-        const logger = document.getElementById('console-log');
+    <h1>Point Camera at QR Code</h1>
 
-        function log(msg) {
-            logger.innerText += '\n> ' + msg;
-        }
+    <div id="scanner-wrap">
+        <video id="preview" playsinline autoplay muted></video>
+        <div id="overlay">
+            <div id="frame">
+                <div class="c tl"></div><div class="c tr"></div>
+                <div class="c bl"></div><div class="c br"></div>
+                <div id="scanline"></div>
+            </div>
+        </div>
+    </div>
 
-        btn.addEventListener('click', async () => {
-            logger.innerText = "Initializing...";
-            btn.style.display = 'none';
+    <p id="status">Waiting for camera...</p>
+
+    <div id="success-screen">
+        <div id="success-icon">✅</div>
+        <p id="success-label">Order ID Scanned</p>
+        <p id="success-id"></p>
+        <p id="success-msg">Returning to console...</p>
+        <button onclick="window.location.reload()" style="background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); padding: 12px 28px; border-radius: 12px; font-weight: 900; font-size: 12px; text-transform: uppercase; cursor: pointer; margin-top: 8px;">Scan Again</button>
+    </div>
+
+    <script type="module">
+        import { BrowserMultiFormatReader } from 'https://esm.sh/@zxing/browser@0.1.4';
+        import { DecodeHintType, BarcodeFormat } from 'https://esm.sh/@zxing/library@0.20.0';
+
+        const params = new URLSearchParams(window.location.search);
+        const returnUrl = params.get('return');
+
+        let codeReader;
+        let locked = false;
+
+        window.startApp = async function() {
+            document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('status').textContent = 'Initializing hardware...';
+            
+            const hints = new Map();
+            hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+            hints.set(DecodeHintType.TRY_HARDER, true);
+            codeReader = new BrowserMultiFormatReader(hints);
 
             try {
-                log("Requesting raw media devices...");
-                
-                // Absolute simplest request possible. No specific resolution or device ID.
+                // 1. Manually request the camera (The code that worked!)
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: 'environment' } 
                 });
                 
-                log("Stream acquired! Attaching to video...");
-                video.srcObject = stream;
+                // 2. Attach it to the video box
+                const videoEl = document.getElementById('preview');
+                videoEl.srcObject = stream;
                 
-                // Tell the video to play and catch any silent browser blocks
-                log("Attempting to play video feed...");
-                await video.play();
+                // 3. Force it to play
+                await videoEl.play();
                 
-                // Find out exactly which lens the phone gave us
-                const track = stream.getVideoTracks()[0];
-                log("SUCCESS. Camera is LIVE.");
-                log("Hardware Lens Name: " + track.label);
-                video.style.borderColor = "#4ade80"; // Turn border green
-                
+                // 4. Reveal the UI
+                document.getElementById('scanner-wrap').style.display = 'block';
+                document.getElementById('status').textContent = 'Align QR code within the frame';
+
+                // 5. Tell ZXing to decode from the stream we already successfully created
+                codeReader.decodeFromStream(stream, videoEl, (result, err) => {
+                    if (locked) return;
+                    
+                    if (result) {
+                        const clean = result.getText().trim().toUpperCase();
+                        if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
+                            document.getElementById('status').textContent = 'Invalid QR — not an Order ID';
+                            return;
+                        }
+                        onSuccess(clean);
+                    }
+                });
+
             } catch (err) {
-                video.style.borderColor = "#ef4444"; // Turn border red
-                log("FATAL ERROR: " + err.name);
-                log(err.message);
+                document.getElementById('status').textContent = 'Camera permission denied.';
                 alert("CAMERA FAILED:\n" + err.name + "\n" + err.message);
+                document.getElementById('start-screen').style.display = 'flex';
             }
-        });
+        };
+
+        function onSuccess(orderId) {
+            locked = true;
+            if (codeReader) codeReader.reset();
+            
+            document.getElementById('scanner-wrap').style.display = 'none';
+            document.getElementById('status').style.display = 'none';
+
+            document.getElementById('success-id').textContent = orderId;
+            document.getElementById('success-screen').style.display = 'flex';
+
+            setTimeout(() => {
+                if (returnUrl) {
+                    const separator = returnUrl.includes('?') ? '&' : '?';
+                    window.location.href = returnUrl + separator + 'scannedId=' + encodeURIComponent(orderId);
+                }
+            }, 1200);
+        }
     </script>
 </body>
 </html>
