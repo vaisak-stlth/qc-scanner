@@ -147,10 +147,31 @@
         let locked = false;
 
         // THE NEW START APP FUNCTION
-        window.startApp = function() {
+        // THE PERMISSION PRIMER
+        window.startApp = async function() {
             document.getElementById('start-screen').style.display = 'none';
-            document.getElementById('controls').style.display = 'flex';
-            initScanner();
+            document.getElementById('status').style.display = 'block';
+            document.getElementById('status').textContent = 'Requesting camera permission...';
+
+            try {
+                // 1. Force the browser to show the "Allow Camera" popup FIRST
+                const primerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                
+                // 2. As soon as they click Allow, shut off this temporary stream
+                primerStream.getTracks().forEach(track => track.stop());
+
+                // 3. NOW the phone will let us see the actual hardware lenses
+                document.getElementById('controls').style.display = 'flex';
+                initScanner();
+
+            } catch (err) {
+                // If they click "Deny" or the OS is blocking it
+                document.getElementById('status').textContent = 'Permission denied.';
+                alert("CAMERA BLOCKED: " + err.message + "\n\nPlease go to your phone Settings, find your browser app, and explicitly allow Camera access.");
+                
+                // Bring back the start button so they can try again
+                document.getElementById('start-screen').style.display = 'flex';
+            }
         };
 
         async function initScanner() {
