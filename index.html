@@ -112,7 +112,10 @@
     </div>
 
     <p id="status">Align QR code within the frame</p>
-    <button id="torch-btn" onclick="toggleTorch()">⚡ Toggle Flash</button>
+    <div id="controls" style="display: flex; gap: 10px; margin-top: 12px; z-index: 50;">
+    <button onclick="switchCamera()" style="background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); padding: 12px 24px; border-radius: 12px; font-weight: 900; font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; cursor: pointer;">🔄 Switch Lens</button>
+    <button id="torch-btn" onclick="toggleTorch()" style="display:none; background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); padding: 10px 24px; border-radius: 12px; font-weight: 900; font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; cursor: pointer;">⚡ Flash</button>
+</div>
 
     <div id="success-screen">
         <div id="success-icon">✅</div>
