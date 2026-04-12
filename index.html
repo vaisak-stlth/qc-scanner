@@ -123,99 +123,132 @@
     </div>
 
     <script type="module">
-        import { BrowserMultiFormatReader, NotFoundException } from 'https://esm.sh/@zxing/browser@0.1.4';
-        import { DecodeHintType, BarcodeFormat } from 'https://esm.sh/@zxing/library@0.20.0';
+    import { BrowserMultiFormatReader } from 'https://esm.sh/@zxing/browser@0.1.4';
+    import { DecodeHintType, BarcodeFormat } from 'https://esm.sh/@zxing/library@0.20.0';
 
-        const params = new URLSearchParams(window.location.search);
-        const returnUrl = params.get('return');
+    const params = new URLSearchParams(window.location.search);
+    const returnUrl = params.get('return');
 
-        let codeReader = null;
-        let currentStream = null;
-        let torchTrack = null;
-        let torchOn = false;
-        let locked = false;
+    let codeReader;
+    let videoDevices = [];
+    let currentDeviceIndex = 0;
+    let locked = false;
 
-       async function startScanner() {
-    try {
+    async function initScanner() {
         const hints = new Map();
         hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
         hints.set(DecodeHintType.TRY_HARDER, true);
-
+        
         codeReader = new BrowserMultiFormatReader(hints);
 
-        // THE BARE MINIMUM CONSTRAINT
-        // Removing width/height forces the browser to just give you its default stream, 
-        // bypassing OverconstrainedErrors on weird Android devices.
-        const constraints = {
-            video: {
-                facingMode: 'environment'
+        try {
+            // Get EVERY camera on the phone
+            videoDevices = await BrowserMultiFormatReader.listVideoInputDevices();
+            
+            if (videoDevices.length === 0) {
+                document.getElementById('status').textContent = 'No cameras found on device.';
+                return;
             }
-        };
 
-        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-        const video = document.getElementById('preview');
-        video.srcObject = currentStream;
-        
-        // Force the video to play and catch silent autoplay blocks
-        await video.play().catch(e => alert("Autoplay blocked: " + e.message));
+            // Try to find the first back-facing camera to start with
+            let startIdx = videoDevices.findIndex(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
+            currentDeviceIndex = startIdx > -1 ? startIdx : 0;
 
-        await codeReader.decodeFromStream(currentStream, video, (result, err) => {
-            if (locked) return;
-            if (result) {
-                const clean = result.getText().trim().toUpperCase();
-                if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
-                    document.getElementById('status').textContent = 'Invalid QR';
-                    return;
-                }
-                onSuccess(clean);
-            }
-        });
+            startDecodingWithDevice(videoDevices[currentDeviceIndex].deviceId);
 
-    } catch(err) {
-        // FORCE THE ERROR TO SHOW ON THE MOBILE SCREEN
-        alert("CAMERA CRASH: " + err.name + "\n" + err.message);
-        console.error(err);
-        document.getElementById('status').textContent = 'Error: ' + err.message;
-    }
-}
-
-        function onSuccess(orderId) {
-            locked = true;
-
-            if (currentStream) currentStream.getTracks().forEach(t => t.stop());
-            if (codeReader) codeReader.reset();
-
-            document.getElementById('scanner-wrap').style.display = 'none';
-            document.getElementById('torch-btn').style.display = 'none';
-            document.getElementById('status').style.display = 'none';
-
-            document.getElementById('success-id').textContent = orderId;
-            document.getElementById('success-screen').style.display = 'flex';
-
-            setTimeout(() => {
-                if (returnUrl) {
-                    const separator = returnUrl.includes('?') ? '&' : '?';
-                    window.location.href = returnUrl + separator + 'scannedId=' + encodeURIComponent(orderId);
-                }
-            }, 1200);
+        } catch (err) {
+            document.getElementById('status').textContent = 'Camera permission denied or unavailable.';
+            alert("Init Error: " + err.message);
         }
+    }
 
-        window.restartScanner = function() {
-            locked = false;
-            document.getElementById('scanner-wrap').style.display = 'block';
-            document.getElementById('status').style.display = 'block';
-            document.getElementById('status').textContent = 'Align QR code within the frame';
-            document.getElementById('success-screen').style.display = 'none';
-            startScanner();
-        };
+    async function startDecodingWithDevice(deviceId) {
+        if (codeReader) codeReader.reset();
+        document.getElementById('status').textContent = `Lens ${currentDeviceIndex + 1} of ${videoDevices.length} active`;
+        
+        try {
+            // Let ZXing handle the stream and video element natively
+            await codeReader.decodeFromVideoDevice(deviceId, 'preview', (result, err) => {
+                if (locked) return;
+                
+                // Hack to enable flashlight if the track supports it
+                const videoEl = document.getElementById('preview');
+                const stream = videoEl.srcObject;
+                if (stream) {
+                    const track = stream.getVideoTracks()[0];
+                    if (track && track.getCapabilities && track.getCapabilities().torch) {
+                        document.getElementById('torch-btn').style.display = 'block';
+                        window.currentTrack = track; // Save for torch toggle
+                    } else {
+                        document.getElementById('torch-btn').style.display = 'none';
+                    }
+                }
 
-        window.toggleTorch = async function() {
-            if (!torchTrack) return;
-            torchOn = !torchOn;
-            await torchTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
-        };
+                if (result) {
+                    const clean = result.getText().trim().toUpperCase();
+                    if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
+                        document.getElementById('status').textContent = 'Invalid QR — not an Order ID';
+                        return;
+                    }
+                    onSuccess(clean);
+                }
+            });
+        } catch (err) {
+            console.error("Decode Error:", err);
+        }
+    }
 
-        startScanner();
-    </script>
+    window.switchCamera = function() {
+        if (videoDevices.length <= 1) {
+            alert("Only one camera detected on this device.");
+            return;
+        }
+        // Cycle to the next lens
+        currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+        startDecodingWithDevice(videoDevices[currentDeviceIndex].deviceId);
+    };
+
+    let torchOn = false;
+    window.toggleTorch = async function() {
+        if (!window.currentTrack) return;
+        torchOn = !torchOn;
+        try {
+            await window.currentTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+        } catch(e) {
+            console.warn("Torch failed", e);
+        }
+    };
+
+    function onSuccess(orderId) {
+        locked = true;
+        if (codeReader) codeReader.reset();
+        
+        document.getElementById('scanner-wrap').style.display = 'none';
+        document.getElementById('controls').style.display = 'none';
+        document.getElementById('status').style.display = 'none';
+
+        document.getElementById('success-id').textContent = orderId;
+        document.getElementById('success-screen').style.display = 'flex';
+
+        setTimeout(() => {
+            if (returnUrl) {
+                const separator = returnUrl.includes('?') ? '&' : '?';
+                window.location.href = returnUrl + separator + 'scannedId=' + encodeURIComponent(orderId);
+            }
+        }, 1200);
+    }
+
+    window.restartScanner = function() {
+        locked = false;
+        document.getElementById('scanner-wrap').style.display = 'block';
+        document.getElementById('controls').style.display = 'flex';
+        document.getElementById('status').style.display = 'block';
+        document.getElementById('success-screen').style.display = 'none';
+        startDecodingWithDevice(videoDevices[currentDeviceIndex].deviceId);
+    };
+
+    // Boot it up
+    initScanner();
+</script>
 </body>
 </html>
