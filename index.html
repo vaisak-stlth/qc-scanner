@@ -135,7 +135,7 @@
         let torchOn = false;
         let locked = false;
 
-        async function startScanner() {
+       async function startScanner() {
     try {
         const hints = new Map();
         hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
@@ -143,39 +143,28 @@
 
         codeReader = new BrowserMultiFormatReader(hints);
 
-        // 1. Ask for the environment camera in the simplest, most bulletproof way
+        // THE BARE MINIMUM CONSTRAINT
+        // Removing width/height forces the browser to just give you its default stream, 
+        // bypassing OverconstrainedErrors on weird Android devices.
         const constraints = {
             video: {
-                facingMode: { ideal: 'environment' },
-                width: { ideal: 1280 }, // Lowered to 720p for better macro focus & battery life
-                height: { ideal: 720 }
+                facingMode: 'environment'
             }
         };
 
-        // 2. Initialize stream
         currentStream = await navigator.mediaDevices.getUserMedia(constraints);
         const video = document.getElementById('preview');
         video.srcObject = currentStream;
+        
+        // Force the video to play and catch silent autoplay blocks
+        await video.play().catch(e => alert("Autoplay blocked: " + e.message));
 
-        // 3. Torch setup (Wrapped in a try/catch because Apple hates the Torch API)
-        try {
-            const [track] = currentStream.getVideoTracks();
-            torchTrack = track;
-            const caps = track.getCapabilities ? track.getCapabilities() : {};
-            if (caps && caps.torch) {
-                document.getElementById('torch-btn').style.display = 'inline-block';
-            }
-        } catch (torchErr) {
-            console.warn("Torch API not supported on this device.");
-        }
-
-        // 4. Start Decoding
         await codeReader.decodeFromStream(currentStream, video, (result, err) => {
             if (locked) return;
             if (result) {
                 const clean = result.getText().trim().toUpperCase();
                 if (!clean.match(/^\d{6}-[A-Z]+-[A-Z0-9]+$/)) {
-                    document.getElementById('status').textContent = 'Invalid QR — not an Order ID';
+                    document.getElementById('status').textContent = 'Invalid QR';
                     return;
                 }
                 onSuccess(clean);
@@ -183,11 +172,10 @@
         });
 
     } catch(err) {
-        console.error("Camera Init Error:", err);
-        document.getElementById('status').textContent = 
-            err.name === 'NotAllowedError'
-                ? 'Camera access denied. Please allow in settings.'
-                : 'Camera error. Please refresh and try again.';
+        // FORCE THE ERROR TO SHOW ON THE MOBILE SCREEN
+        alert("CAMERA CRASH: " + err.name + "\n" + err.message);
+        console.error(err);
+        document.getElementById('status').textContent = 'Error: ' + err.message;
     }
 }
 
